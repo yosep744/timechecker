@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_time_entries_created_at ON time_entries(created_a
 
 -- 전문 검색을 위한 인덱스 (메모 검색용)
 CREATE INDEX IF NOT EXISTS idx_time_entries_notes_search
-ON time_entries USING gin(to_tsvector('korean', notes));
+ON time_entries USING gin(to_tsvector('simple', notes));
 
 -- updated_at 자동 업데이트 함수
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -104,7 +104,7 @@ WHERE start_time >= NOW() - INTERVAL '7 days'
 GROUP BY category
 ORDER BY total_duration_seconds DESC;
 
--- 메모 검색 함수 (한글 지원)
+-- 메모 검색 함수 (텍스트 검색)
 CREATE OR REPLACE FUNCTION search_notes(search_query TEXT)
 RETURNS TABLE (
   id TEXT,
@@ -124,10 +124,10 @@ BEGIN
     te.notes,
     te.start_time,
     te.duration,
-    ts_rank(to_tsvector('korean', te.notes), plainto_tsquery('korean', search_query)) as relevance
+    ts_rank(to_tsvector('simple', te.notes), plainto_tsquery('simple', search_query)) as relevance
   FROM time_entries te
   WHERE te.notes IS NOT NULL
-    AND to_tsvector('korean', te.notes) @@ plainto_tsquery('korean', search_query)
+    AND to_tsvector('simple', te.notes) @@ plainto_tsquery('simple', search_query)
   ORDER BY relevance DESC, te.start_time DESC;
 END;
 $$ LANGUAGE plpgsql;
