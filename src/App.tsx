@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
 import Login from './components/Login'
 import AdminDashboard from './components/AdminDashboard'
+import NoteModal from './components/NoteModal'
 import type { User, TimeEntry } from './types'
 import { CATEGORIES } from './types'
+import { fetchUsers, createUser, fetchTimeEntries, createTimeEntry } from './lib/api'
+import { isSupabaseConfigured } from './lib/supabase'
 import './App.css'
 
 type ViewMode = 'personal' | 'admin'
@@ -15,44 +18,42 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0].id)
   const [currentTime, setCurrentTime] = useState(Date.now())
   const [viewMode, setViewMode] = useState<ViewMode>('personal')
+  const [showNoteModal, setShowNoteModal] = useState(false)
+  const [pendingEntry, setPendingEntry] = useState<TimeEntry | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  // Load data from localStorage
+  // Load data from Supabase or localStorage
   useEffect(() => {
-    const storedUsers = localStorage.getItem('users')
-    const storedEntries = localStorage.getItem('allTimeEntries')
-
-    if (storedUsers) {
-      setUsers(JSON.parse(storedUsers))
-    } else {
-      // Create default admin user
-      const defaultAdmin: User = {
-        id: 'admin-default',
-        name: '관리자',
-        role: 'admin',
-        createdAt: Date.now()
-      }
-      setUsers([defaultAdmin])
-      localStorage.setItem('users', JSON.stringify([defaultAdmin]))
-    }
-
-    if (storedEntries) {
-      setAllEntries(JSON.parse(storedEntries))
-    }
+    loadInitialData()
   }, [])
 
-  // Save users to localStorage
-  useEffect(() => {
-    if (users.length > 0) {
-      localStorage.setItem('users', JSON.stringify(users))
-    }
-  }, [users])
+  const loadInitialData = async () => {
+    setLoading(true)
+    try {
+      // Load users
+      let loadedUsers = await fetchUsers()
+      if (loadedUsers.length === 0) {
+        // Create default admin user
+        const defaultAdmin: User = {
+          id: 'admin-default',
+          name: '관리자',
+          role: 'admin',
+          createdAt: Date.now()
+        }
+        await createUser(defaultAdmin)
+        loadedUsers = [defaultAdmin]
+      }
+      setUsers(loadedUsers)
 
-  // Save entries to localStorage
-  useEffect(() => {
-    if (allEntries.length > 0) {
-      localStorage.setItem('allTimeEntries', JSON.stringify(allEntries))
+      // Load time entries
+      const loadedEntries = await fetchTimeEntries()
+      setAllEntries(loadedEntries)
+    } catch (error) {
+      console.error('Error loading initial data:', error)
+    } finally {
+      setLoading(false)
     }
-  }, [allEntries])
+  }
 
   // Update current time every second for timer display
   useEffect(() => {
@@ -67,14 +68,18 @@ function App() {
     setViewMode(user.role === 'admin' ? 'admin' : 'personal')
   }
 
-  const handleAddUser = (name: string, role: 'teacher' | 'staff' | 'admin') => {
+  const handleAddUser = async (name: string, role: 'teacher' | 'staff' | 'admin') => {
     const newUser: User = {
       id: `user-${Date.now()}`,
       name,
       role,
       createdAt: Date.now()
     }
-    setUsers([...users, newUser])
+
+    const created = await createUser(newUser)
+    if (created) {
+      setUsers([...users, created])
+    }
   }
 
   const handleLogout = () => {
@@ -111,9 +116,48 @@ function App() {
       duration
     }
 
-    setAllEntries([...allEntries, completedEntry])
+    // Show note modal
+    setPendingEntry(completedEntry)
+    setShowNoteModal(true)
     setCurrentEntry(null)
   }
+
+  const handleSaveNote = async (notes: string) => {
+    if (!pendingEntry) return
+
+    const entryWithNotes: TimeEntry = {
+      ...pendingEntry,
+      notes
+    }
+
+    const created = await createTimeEntry(entryWithNotes)
+    if (created) {
+      setAllEntries([created, ...allEntries])
+    }
+
+    setShowNoteModal(false)
+    setPendingEntry(null)
+  }
+
+  const handleSkipNote = async () => {
+    if (!pendingEntry) return
+
+    const created = await createTimeEntry(pendingEntry)
+    if (created) {
+      setAllEntries([created, ...allEntries])
+    }
+
+    setShowNoteModal(false)
+    setPendingEntry(null)
+  }
+
+  // Reserved for future use: edit notes after creation
+  // const handleUpdateNote = async (entryId: string, notes: string) => {
+  //   const updated = await updateTimeEntry(entryId, { notes })
+  //   if (updated) {
+  //     setAllEntries(allEntries.map(e => e.id === entryId ? updated : e))
+  //   }
+  // }
 
   const getCurrentDuration = () => {
     if (!currentEntry) return 0
@@ -162,6 +206,22 @@ function App() {
     }
   }
 
+  if (loading) {
+    return (
+      <div className="app loading-screen">
+        <div className="loading-content">
+          <div className="loader"></div>
+          <p>데이터를 불러오는 중...</p>
+          {isSupabaseConfigured ? (
+            <p className="db-status">🚀 Supabase 연결됨</p>
+          ) : (
+            <p className="db-status">💾 로컬 모드</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   // If not logged in, show login screen
   if (!currentUser) {
     return <Login users={users} onLogin={handleLogin} onAddUser={handleAddUser} />
@@ -186,154 +246,172 @@ function App() {
   const totalWeeklySeconds = getTotalWeeklyHours(currentUser.id)
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="header-main">
-          <div>
-            <h1>⏱️ 학원 업무 시간 추적기</h1>
-            <p className="subtitle">
-              {currentUser.name}님의 업무 시간 관리
-            </p>
-          </div>
-          <div className="header-actions">
-            {currentUser.role === 'admin' && (
-              <button className="btn-admin" onClick={() => setViewMode('admin')}>
-                관리자 대시보드
-              </button>
-            )}
-            <button className="btn-logout-header" onClick={handleLogout}>
-              로그아웃
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="container">
-        {/* Timer Section */}
-        <div className="timer-section">
-          <div className="timer-display">
-            {currentEntry ? (
-              <>
-                <div className="timer-label">진행 중</div>
-                <div className="timer-time">{formatDuration(getCurrentDuration())}</div>
-                <div className="timer-category">
-                  {CATEGORIES.find(c => c.id === currentEntry.category)?.label}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="timer-label">대기 중</div>
-                <div className="timer-time">00:00:00</div>
-              </>
-            )}
-          </div>
-
-          {!currentEntry ? (
-            <div className="category-selector">
-              <label>업무 카테고리 선택:</label>
-              <div className="category-grid">
-                {CATEGORIES.map(category => (
-                  <button
-                    key={category.id}
-                    className={`category-btn ${selectedCategory === category.id ? 'active' : ''}`}
-                    style={{
-                      borderColor: selectedCategory === category.id ? category.color : '#e5e7eb',
-                      backgroundColor: selectedCategory === category.id ? category.color + '20' : 'transparent'
-                    }}
-                    onClick={() => setSelectedCategory(category.id)}
-                  >
-                    {category.label}
-                  </button>
-                ))}
-              </div>
-              <button className="start-btn" onClick={startTimer}>
-                시작하기 ▶️
+    <>
+      <div className="app">
+        <header className="header">
+          <div className="header-main">
+            <div>
+              <h1>⏱️ 학원 업무 시간 추적기</h1>
+              <p className="subtitle">
+                {currentUser.name}님의 업무 시간 관리
+                {isSupabaseConfigured && <span className="db-badge">☁️ 클라우드</span>}
+              </p>
+            </div>
+            <div className="header-actions">
+              {currentUser.role === 'admin' && (
+                <button className="btn-admin" onClick={() => setViewMode('admin')}>
+                  관리자 대시보드
+                </button>
+              )}
+              <button className="btn-logout-header" onClick={handleLogout}>
+                로그아웃
               </button>
             </div>
-          ) : (
-            <button className="stop-btn" onClick={stopTimer}>
-              정지하기 ⏸️
+          </div>
+        </header>
+
+        <div className="container">
+          {/* Timer Section */}
+          <div className="timer-section">
+            <div className="timer-display">
+              {currentEntry ? (
+                <>
+                  <div className="timer-label">진행 중</div>
+                  <div className="timer-time">{formatDuration(getCurrentDuration())}</div>
+                  <div className="timer-category">
+                    {CATEGORIES.find(c => c.id === currentEntry.category)?.label}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="timer-label">대기 중</div>
+                  <div className="timer-time">00:00:00</div>
+                </>
+              )}
+            </div>
+
+            {!currentEntry ? (
+              <div className="category-selector">
+                <label>업무 카테고리 선택:</label>
+                <div className="category-grid">
+                  {CATEGORIES.map(category => (
+                    <button
+                      key={category.id}
+                      className={`category-btn ${selectedCategory === category.id ? 'active' : ''}`}
+                      style={{
+                        borderColor: selectedCategory === category.id ? category.color : '#e5e7eb',
+                        backgroundColor: selectedCategory === category.id ? category.color + '20' : 'transparent'
+                      }}
+                      onClick={() => setSelectedCategory(category.id)}
+                    >
+                      {category.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="start-btn" onClick={startTimer}>
+                  시작하기 ▶️
+                </button>
+              </div>
+            ) : (
+              <button className="stop-btn" onClick={stopTimer}>
+                정지하기 ⏸️
+              </button>
+            )}
+          </div>
+
+          {/* Weekly Summary Section */}
+          <div className="summary-section">
+            <h2>📊 이번 주 활동 요약</h2>
+            <div className="summary-stats">
+              <div className="total-hours">
+                <div className="total-label">총 업무 시간</div>
+                <div className="total-value">{formatHours(totalWeeklySeconds)}시간</div>
+                <div className="total-detail">
+                  일주일간 {userEntries.filter(e => e.startTime >= Date.now() - 7 * 24 * 60 * 60 * 1000).length}개 활동
+                </div>
+              </div>
+            </div>
+
+            <div className="category-breakdown">
+              {CATEGORIES.map(category => {
+                const seconds = weeklySummary[category.id] || 0
+                const percentage = totalWeeklySeconds > 0 ? (seconds / totalWeeklySeconds) * 100 : 0
+
+                return (
+                  <div key={category.id} className="category-item">
+                    <div className="category-header">
+                      <span className="category-name">{category.label}</span>
+                      <span className="category-hours">{formatHours(seconds)}시간</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div
+                        className="progress-fill"
+                        style={{
+                          width: `${percentage}%`,
+                          backgroundColor: category.color
+                        }}
+                      />
+                    </div>
+                    <div className="category-percentage">{percentage.toFixed(1)}%</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <button className="clear-btn" onClick={clearAllData}>
+              내 데이터 초기화 🗑️
             </button>
+          </div>
+
+          {/* Recent Entries */}
+          {userEntries.length > 0 && (
+            <div className="recent-section">
+              <h2>📝 최근 활동 내역</h2>
+              <div className="entries-list">
+                {userEntries.slice(0, 10).map(entry => (
+                  <div key={entry.id} className="entry-item">
+                    <div
+                      className="entry-color"
+                      style={{ backgroundColor: CATEGORIES.find(c => c.id === entry.category)?.color }}
+                    />
+                    <div className="entry-info">
+                      <div className="entry-category">
+                        {CATEGORIES.find(c => c.id === entry.category)?.label}
+                      </div>
+                      <div className="entry-time">
+                        {new Date(entry.startTime).toLocaleString('ko-KR')}
+                      </div>
+                      {entry.notes && (
+                        <div className="entry-notes">
+                          📝 {entry.notes}
+                        </div>
+                      )}
+                    </div>
+                    <div className="entry-duration">
+                      {formatDuration(entry.duration)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Weekly Summary Section */}
-        <div className="summary-section">
-          <h2>📊 이번 주 활동 요약</h2>
-          <div className="summary-stats">
-            <div className="total-hours">
-              <div className="total-label">총 업무 시간</div>
-              <div className="total-value">{formatHours(totalWeeklySeconds)}시간</div>
-              <div className="total-detail">
-                일주일간 {userEntries.filter(e => e.startTime >= Date.now() - 7 * 24 * 60 * 60 * 1000).length}개 활동
-              </div>
-            </div>
-          </div>
-
-          <div className="category-breakdown">
-            {CATEGORIES.map(category => {
-              const seconds = weeklySummary[category.id] || 0
-              const percentage = totalWeeklySeconds > 0 ? (seconds / totalWeeklySeconds) * 100 : 0
-
-              return (
-                <div key={category.id} className="category-item">
-                  <div className="category-header">
-                    <span className="category-name">{category.label}</span>
-                    <span className="category-hours">{formatHours(seconds)}시간</span>
-                  </div>
-                  <div className="progress-bar">
-                    <div
-                      className="progress-fill"
-                      style={{
-                        width: `${percentage}%`,
-                        backgroundColor: category.color
-                      }}
-                    />
-                  </div>
-                  <div className="category-percentage">{percentage.toFixed(1)}%</div>
-                </div>
-              )
-            })}
-          </div>
-
-          <button className="clear-btn" onClick={clearAllData}>
-            내 데이터 초기화 🗑️
-          </button>
-        </div>
-
-        {/* Recent Entries */}
-        {userEntries.length > 0 && (
-          <div className="recent-section">
-            <h2>📝 최근 활동 내역</h2>
-            <div className="entries-list">
-              {userEntries.slice(-10).reverse().map(entry => (
-                <div key={entry.id} className="entry-item">
-                  <div
-                    className="entry-color"
-                    style={{ backgroundColor: CATEGORIES.find(c => c.id === entry.category)?.color }}
-                  />
-                  <div className="entry-info">
-                    <div className="entry-category">
-                      {CATEGORIES.find(c => c.id === entry.category)?.label}
-                    </div>
-                    <div className="entry-time">
-                      {new Date(entry.startTime).toLocaleString('ko-KR')}
-                    </div>
-                  </div>
-                  <div className="entry-duration">
-                    {formatDuration(entry.duration)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <footer className="footer">
+          <p>Made with ❤️ for improving academy efficiency</p>
+        </footer>
       </div>
 
-      <footer className="footer">
-        <p>Made with ❤️ for improving academy efficiency</p>
-      </footer>
-    </div>
+      {/* Note Modal */}
+      {showNoteModal && pendingEntry && (
+        <NoteModal
+          category={CATEGORIES.find(c => c.id === pendingEntry.category)?.label || ''}
+          duration={pendingEntry.duration}
+          onSave={handleSaveNote}
+          onSkip={handleSkipNote}
+        />
+      )}
+    </>
   )
 }
 

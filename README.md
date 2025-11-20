@@ -19,8 +19,9 @@
   - 자료 준비
   - 회의
   - 기타
+- 📝 **업무 메모**: 각 활동마다 상세 내용 기록 가능 (AI 분석 준비)
 - 📊 **주간 통계**: 지난 7일간의 업무 시간을 카테고리별로 요약
-- 📝 **최근 활동 내역**: 최근 10개 활동 기록 확인
+- 📝 **최근 활동 내역**: 최근 10개 활동 기록 및 메모 확인
 
 ### 🏢 관리자 대시보드
 - 📈 **전체 통계**: 학원 전체 업무 시간 한눈에 확인
@@ -30,9 +31,10 @@
 - 🔍 **개별 팀원 상세**: 각 팀원의 주요 업무와 활동량 확인
 
 ### 💾 데이터 관리
-- **자동 저장**: localStorage를 통한 데이터 자동 저장
+- **하이브리드 저장**: Supabase (클라우드) 또는 localStorage (로컬)
 - **개인별 저장**: 각 사용자의 데이터 독립 관리
 - **데이터 초기화**: 개인별 또는 전체 데이터 삭제 가능
+- **AI 분석 준비**: 업무 메모를 통한 패턴 분석 가능
 
 ### 🎨 사용자 경험
 - 📱 **반응형 디자인**: 모바일, 태블릿, 데스크톱 모두 지원
@@ -75,6 +77,7 @@ npm run preview
 - **TypeScript** - 타입 안정성
 - **Vite** - 빠른 빌드 도구
 - **CSS3** - 모던 스타일링
+- **Supabase** - PostgreSQL 기반 클라우드 데이터베이스 (선택사항)
 
 ## 🎮 사용 방법
 
@@ -106,9 +109,92 @@ npm run preview
 
 ## 📊 데이터 관리
 
-- 모든 시간 기록은 브라우저의 localStorage에 자동으로 저장됩니다
-- 데이터는 브라우저가 닫혀도 유지됩니다
-- "데이터 초기화" 버튼으로 모든 기록을 삭제할 수 있습니다
+기본적으로 **localStorage**를 사용하지만, **Supabase**를 설정하면 클라우드 데이터베이스로 자동 전환됩니다.
+
+### 로컬 모드 (기본)
+- 브라우저 localStorage 사용
+- 별도 설정 없이 즉시 사용 가능
+- 브라우저별 데이터 독립
+
+### 클라우드 모드 (Supabase)
+- 여러 기기에서 데이터 동기화
+- 실시간 협업 가능
+- AI 분석 및 고급 쿼리 지원
+
+## 🚀 Supabase 설정 (선택사항)
+
+Supabase를 사용하면 클라우드 데이터베이스로 업그레이드할 수 있습니다!
+
+### 1단계: Supabase 프로젝트 생성
+
+1. [Supabase](https://supabase.com) 접속 및 회원가입
+2. "New Project" 클릭
+3. 프로젝트 이름, 데이터베이스 비밀번호 설정
+4. 리전 선택 (Northeast Asia - Seoul 추천)
+
+### 2단계: 데이터베이스 스키마 실행
+
+1. Supabase 대시보드 → SQL Editor 이동
+2. `supabase-schema.sql` 파일 내용 복사
+3. SQL Editor에 붙여넣기 후 실행 (Run)
+
+### 3단계: 환경 변수 설정
+
+1. `.env.example` 파일을 복사하여 `.env` 파일 생성:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Supabase 대시보드 → Settings → API에서 정보 확인:
+   - Project URL
+   - anon/public key
+
+3. `.env` 파일에 입력:
+   ```env
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key-here
+   ```
+
+4. 개발 서버 재시작:
+   ```bash
+   npm run dev
+   ```
+
+### 4단계: 확인
+
+로딩 화면에 "🚀 Supabase 연결됨" 메시지가 표시되면 성공!
+
+### AI 분석 예시 (Supabase SQL)
+
+```sql
+-- 강사별 가장 많이 가르치는 과목 분석
+SELECT
+  u.name,
+  te.notes,
+  COUNT(*) as frequency,
+  SUM(te.duration) / 3600.0 as total_hours
+FROM time_entries te
+JOIN users u ON te.user_id = u.id
+WHERE te.category = 'teaching'
+  AND te.notes IS NOT NULL
+GROUP BY u.name, te.notes
+ORDER BY frequency DESC
+LIMIT 10;
+
+-- 업무 패턴 분석
+SELECT
+  EXTRACT(HOUR FROM start_time) as hour_of_day,
+  category,
+  COUNT(*) as activity_count,
+  AVG(duration) / 60 as avg_minutes
+FROM time_entries
+WHERE start_time >= NOW() - INTERVAL '30 days'
+GROUP BY hour_of_day, category
+ORDER BY hour_of_day, activity_count DESC;
+
+-- 메모 검색 (한글 지원)
+SELECT * FROM search_notes('수학 일차방정식');
+```
 
 ## 🌐 배포
 

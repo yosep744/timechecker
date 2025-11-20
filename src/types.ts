@@ -5,6 +5,7 @@ export interface TimeEntry {
   endTime?: number
   duration: number
   userId: string
+  notes?: string  // 업무 메모
 }
 
 export interface User {
