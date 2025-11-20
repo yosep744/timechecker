@@ -1,47 +1,58 @@
 import { useState, useEffect } from 'react'
+import Login from './components/Login'
+import AdminDashboard from './components/AdminDashboard'
+import type { User, TimeEntry } from './types'
+import { CATEGORIES } from './types'
 import './App.css'
 
-interface TimeEntry {
-  id: string
-  category: string
-  startTime: number
-  endTime?: number
-  duration: number
-}
-
-interface WeeklySummary {
-  [category: string]: number
-}
-
-const CATEGORIES = [
-  { id: 'teaching', label: '수업/강의', color: '#3b82f6' },
-  { id: 'counseling', label: '학생 상담', color: '#10b981' },
-  { id: 'admin', label: '행정 업무', color: '#f59e0b' },
-  { id: 'preparation', label: '자료 준비', color: '#8b5cf6' },
-  { id: 'meeting', label: '회의', color: '#ec4899' },
-  { id: 'other', label: '기타', color: '#6b7280' }
-]
+type ViewMode = 'personal' | 'admin'
 
 function App() {
-  const [entries, setEntries] = useState<TimeEntry[]>([])
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [users, setUsers] = useState<User[]>([])
+  const [allEntries, setAllEntries] = useState<TimeEntry[]>([])
   const [currentEntry, setCurrentEntry] = useState<TimeEntry | null>(null)
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0].id)
   const [currentTime, setCurrentTime] = useState(Date.now())
+  const [viewMode, setViewMode] = useState<ViewMode>('personal')
 
-  // Load entries from localStorage
+  // Load data from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem('timeEntries')
-    if (stored) {
-      setEntries(JSON.parse(stored))
+    const storedUsers = localStorage.getItem('users')
+    const storedEntries = localStorage.getItem('allTimeEntries')
+
+    if (storedUsers) {
+      setUsers(JSON.parse(storedUsers))
+    } else {
+      // Create default admin user
+      const defaultAdmin: User = {
+        id: 'admin-default',
+        name: '관리자',
+        role: 'admin',
+        createdAt: Date.now()
+      }
+      setUsers([defaultAdmin])
+      localStorage.setItem('users', JSON.stringify([defaultAdmin]))
+    }
+
+    if (storedEntries) {
+      setAllEntries(JSON.parse(storedEntries))
     }
   }, [])
 
+  // Save users to localStorage
+  useEffect(() => {
+    if (users.length > 0) {
+      localStorage.setItem('users', JSON.stringify(users))
+    }
+  }, [users])
+
   // Save entries to localStorage
   useEffect(() => {
-    if (entries.length > 0) {
-      localStorage.setItem('timeEntries', JSON.stringify(entries))
+    if (allEntries.length > 0) {
+      localStorage.setItem('allTimeEntries', JSON.stringify(allEntries))
     }
-  }, [entries])
+  }, [allEntries])
 
   // Update current time every second for timer display
   useEffect(() => {
@@ -51,12 +62,39 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
+  const handleLogin = (user: User) => {
+    setCurrentUser(user)
+    setViewMode(user.role === 'admin' ? 'admin' : 'personal')
+  }
+
+  const handleAddUser = (name: string, role: 'teacher' | 'staff' | 'admin') => {
+    const newUser: User = {
+      id: `user-${Date.now()}`,
+      name,
+      role,
+      createdAt: Date.now()
+    }
+    setUsers([...users, newUser])
+  }
+
+  const handleLogout = () => {
+    if (currentEntry) {
+      // Stop current timer before logout
+      stopTimer()
+    }
+    setCurrentUser(null)
+    setViewMode('personal')
+  }
+
   const startTimer = () => {
+    if (!currentUser) return
+
     const newEntry: TimeEntry = {
       id: Date.now().toString(),
       category: selectedCategory,
       startTime: Date.now(),
-      duration: 0
+      duration: 0,
+      userId: currentUser.id
     }
     setCurrentEntry(newEntry)
   }
@@ -73,7 +111,7 @@ function App() {
       duration
     }
 
-    setEntries([...entries, completedEntry])
+    setAllEntries([...allEntries, completedEntry])
     setCurrentEntry(null)
   }
 
@@ -93,45 +131,81 @@ function App() {
     return (seconds / 3600).toFixed(1)
   }
 
-  const getWeeklySummary = (): WeeklySummary => {
+  const getWeeklySummary = (userId: string) => {
     const now = Date.now()
     const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000
 
-    const summary: WeeklySummary = {}
+    const summary: { [key: string]: number } = {}
     CATEGORIES.forEach(cat => {
       summary[cat.id] = 0
     })
 
-    entries.forEach(entry => {
-      if (entry.startTime >= oneWeekAgo) {
+    allEntries
+      .filter(entry => entry.userId === userId && entry.startTime >= oneWeekAgo)
+      .forEach(entry => {
         summary[entry.category] = (summary[entry.category] || 0) + entry.duration
-      }
-    })
+      })
 
     return summary
   }
 
-  const getTotalWeeklyHours = () => {
-    const summary = getWeeklySummary()
+  const getTotalWeeklyHours = (userId: string) => {
+    const summary = getWeeklySummary(userId)
     return Object.values(summary).reduce((total, seconds) => total + seconds, 0)
   }
 
   const clearAllData = () => {
     if (window.confirm('모든 데이터를 삭제하시겠습니까?')) {
-      setEntries([])
+      setAllEntries([])
       setCurrentEntry(null)
-      localStorage.removeItem('timeEntries')
+      localStorage.removeItem('allTimeEntries')
     }
   }
 
-  const weeklySummary = getWeeklySummary()
-  const totalWeeklySeconds = getTotalWeeklyHours()
+  // If not logged in, show login screen
+  if (!currentUser) {
+    return <Login users={users} onLogin={handleLogin} onAddUser={handleAddUser} />
+  }
+
+  // If admin and in admin mode, show admin dashboard
+  if (currentUser.role === 'admin' && viewMode === 'admin') {
+    return (
+      <AdminDashboard
+        currentUser={currentUser}
+        allUsers={users}
+        allEntries={allEntries}
+        onLogout={handleLogout}
+        onViewPersonal={() => setViewMode('personal')}
+      />
+    )
+  }
+
+  // Show personal dashboard
+  const userEntries = allEntries.filter(e => e.userId === currentUser.id)
+  const weeklySummary = getWeeklySummary(currentUser.id)
+  const totalWeeklySeconds = getTotalWeeklyHours(currentUser.id)
 
   return (
     <div className="app">
       <header className="header">
-        <h1>⏱️ 학원 업무 시간 추적기</h1>
-        <p className="subtitle">업무 효율을 높이는 시간 관리 도구</p>
+        <div className="header-main">
+          <div>
+            <h1>⏱️ 학원 업무 시간 추적기</h1>
+            <p className="subtitle">
+              {currentUser.name}님의 업무 시간 관리
+            </p>
+          </div>
+          <div className="header-actions">
+            {currentUser.role === 'admin' && (
+              <button className="btn-admin" onClick={() => setViewMode('admin')}>
+                관리자 대시보드
+              </button>
+            )}
+            <button className="btn-logout-header" onClick={handleLogout}>
+              로그아웃
+            </button>
+          </div>
+        </div>
       </header>
 
       <div className="container">
@@ -190,7 +264,9 @@ function App() {
             <div className="total-hours">
               <div className="total-label">총 업무 시간</div>
               <div className="total-value">{formatHours(totalWeeklySeconds)}시간</div>
-              <div className="total-detail">일주일간 {entries.filter(e => e.startTime >= Date.now() - 7 * 24 * 60 * 60 * 1000).length}개 활동</div>
+              <div className="total-detail">
+                일주일간 {userEntries.filter(e => e.startTime >= Date.now() - 7 * 24 * 60 * 60 * 1000).length}개 활동
+              </div>
             </div>
           </div>
 
@@ -221,16 +297,16 @@ function App() {
           </div>
 
           <button className="clear-btn" onClick={clearAllData}>
-            데이터 초기화 🗑️
+            내 데이터 초기화 🗑️
           </button>
         </div>
 
         {/* Recent Entries */}
-        {entries.length > 0 && (
+        {userEntries.length > 0 && (
           <div className="recent-section">
             <h2>📝 최근 활동 내역</h2>
             <div className="entries-list">
-              {entries.slice(-10).reverse().map(entry => (
+              {userEntries.slice(-10).reverse().map(entry => (
                 <div key={entry.id} className="entry-item">
                   <div
                     className="entry-color"
